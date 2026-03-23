@@ -7,6 +7,35 @@ suppressPackageStartupMessages({
 # Fixed seed for reproducible resampling/tuning used before test evaluation.
 set.seed(20260323)
 
+# #region agent log
+debug_log_path <- ".cursor/debug-b139f0.log"
+debug_run_id <- paste0("pre-fix-", format(Sys.time(), "%Y%m%d%H%M%S"))
+debug_log <- function(hypothesis_id, location, message, data = list()) {
+  entry <- list(
+    sessionId = "b139f0",
+    runId = debug_run_id,
+    hypothesisId = hypothesis_id,
+    location = location,
+    message = message,
+    data = data,
+    timestamp = as.integer(as.numeric(Sys.time()) * 1000)
+  )
+  json_line <- if (requireNamespace("jsonlite", quietly = TRUE)) {
+    jsonlite::toJSON(entry, auto_unbox = TRUE, null = "null")
+  } else {
+    paste0(
+      "{\"sessionId\":\"b139f0\",\"runId\":\"", debug_run_id,
+      "\",\"hypothesisId\":\"", hypothesis_id,
+      "\",\"location\":\"", location,
+      "\",\"message\":\"", message,
+      "\",\"timestamp\":", as.integer(as.numeric(Sys.time()) * 1000), "}"
+    )
+  }
+  cat(as.character(json_line), "\n", file = debug_log_path, append = TRUE)
+}
+debug_log("H3", "scripts/model-test.R:37", "script_started", list())
+# #endregion
+
 train_path <- "data/processed/train_split.csv"
 test_path <- "data/processed/test_split.csv"
 penalty_path <- "data/processed/lasso_nested_penalty_by_fold.csv"
@@ -104,10 +133,63 @@ pred_intercept <- predict(fitted_intercept, new_data = test_df) %>%
 
 all_preds <- dplyr::bind_rows(pred_lasso, pred_ols, pred_intercept)
 
-test_metrics <- all_preds %>%
-  dplyr::group_by(model) %>%
-  metrics_used(truth = quality, estimate = .pred) %>%
-  dplyr::ungroup()
+# #region agent log
+debug_log(
+  "H2",
+  "scripts/model-test.R:136",
+  "all_preds_built",
+  list(
+    nrow = nrow(all_preds),
+    cols = paste(names(all_preds), collapse = ","),
+    has_quality = "quality" %in% names(all_preds),
+    has_pred = ".pred" %in% names(all_preds)
+  )
+)
+# #endregion
+
+test_metrics <- tryCatch(
+  {
+    # #region agent log
+    debug_log(
+      "H1",
+      "scripts/model-test.R:152",
+      "before_test_metrics_compute",
+      list(
+        quality_class = paste(class(all_preds$quality), collapse = ","),
+        pred_class = paste(class(all_preds$.pred), collapse = ","),
+        quality_na = sum(is.na(all_preds$quality)),
+        pred_na = sum(is.na(all_preds$.pred))
+      )
+    )
+    # #endregion
+
+    metrics <- all_preds %>%
+      dplyr::group_by(model) %>%
+      metrics_used(truth = quality, estimate = .pred) %>%
+      dplyr::ungroup()
+
+    # #region agent log
+    debug_log(
+      "H4",
+      "scripts/model-test.R:170",
+      "test_metrics_computed",
+      list(nrow = nrow(metrics), cols = paste(names(metrics), collapse = ","))
+    )
+    # #endregion
+    metrics
+  },
+  error = function(e) {
+    # #region agent log
+    debug_log(
+      "H1",
+      "scripts/model-test.R:180",
+      "test_metrics_compute_error",
+      list(error = conditionMessage(e), metrics_used_exists = exists("metrics_used"))
+    )
+    # #endregion
+    stop(e)
+  }
+)
 
 errors_for_terminal <- test_metrics %>%
   dplyr::filter(.metric %in% c("rmse", "mae")) %>%
@@ -121,6 +203,16 @@ cat("\nLasso penalty used:", signif(lasso_penalty, 4), "\n")
 
 metrics_output <- "output/model_test_metrics.csv"
 plot_output <- "output/model_test_yardsticks_bar.png"
+if (!dir.exists("output")) dir.create("output", recursive = TRUE)
+
+# #region agent log
+debug_log(
+  "H5",
+  "scripts/model-test.R:200",
+  "before_write_outputs",
+  list(test_metrics_exists = exists("test_metrics"), test_metrics_nrow = nrow(test_metrics))
+)
+# #endregion
 
 readr::write_csv(test_metrics, metrics_output)
 

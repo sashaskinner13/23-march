@@ -14,16 +14,14 @@ suppressPackageStartupMessages({
   )]
 
   if (length(missing_packages) > 0) {
-    stop(
-      paste(
-        "Missing required package(s):",
-        paste(missing_packages, collapse = ", "),
-        "\nInstall them with install.packages(...) before running modeling scripts."
-      ),
-      call. = FALSE
+    message(
+      "Installing missing required package(s): ",
+      paste(missing_packages, collapse = ", ")
     )
+    install.packages(missing_packages, dependencies = TRUE)
   }
 
   invisible(lapply(required_packages, library, character.only = TRUE))
 })
+
 
