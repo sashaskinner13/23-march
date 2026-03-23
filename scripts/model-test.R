@@ -7,35 +7,6 @@ suppressPackageStartupMessages({
 # Fixed seed for reproducible resampling/tuning used before test evaluation.
 set.seed(20260323)
 
-# #region agent log
-debug_log_path <- ".cursor/debug-b139f0.log"
-debug_run_id <- paste0("pre-fix-", format(Sys.time(), "%Y%m%d%H%M%S"))
-debug_log <- function(hypothesis_id, location, message, data = list()) {
-  entry <- list(
-    sessionId = "b139f0",
-    runId = debug_run_id,
-    hypothesisId = hypothesis_id,
-    location = location,
-    message = message,
-    data = data,
-    timestamp = as.integer(as.numeric(Sys.time()) * 1000)
-  )
-  json_line <- if (requireNamespace("jsonlite", quietly = TRUE)) {
-    jsonlite::toJSON(entry, auto_unbox = TRUE, null = "null")
-  } else {
-    paste0(
-      "{\"sessionId\":\"b139f0\",\"runId\":\"", debug_run_id,
-      "\",\"hypothesisId\":\"", hypothesis_id,
-      "\",\"location\":\"", location,
-      "\",\"message\":\"", message,
-      "\",\"timestamp\":", as.integer(as.numeric(Sys.time()) * 1000), "}"
-    )
-  }
-  cat(as.character(json_line), "\n", file = debug_log_path, append = TRUE)
-}
-debug_log("H3", "scripts/model-test.R:37", "script_started", list())
-# #endregion
-
 train_path <- "data/processed/train_split.csv"
 test_path <- "data/processed/test_split.csv"
 penalty_path <- "data/processed/lasso_nested_penalty_by_fold.csv"
@@ -60,7 +31,10 @@ if (!"quality" %in% names(train_df) || !"quality" %in% names(test_df)) {
   stop("Expected a 'quality' outcome column in both split datasets.", call. = FALSE)
 }
 
-metrics_used <- yardstick::metric_set(yardstick::rmse, yardstick::mae, yardstick::rsq)
+train_df <- dplyr::mutate(train_df, quality = factor(quality))
+test_df <- dplyr::mutate(test_df, quality = factor(quality, levels = levels(train_df$quality)))
+
+metrics_used <- yardstick::metric_set(yardstick::accuracy)
 
 base_recipe <- recipes::recipe(quality ~ ., data = train_df)
 intercept_recipe <- recipes::recipe(quality ~ 1, data = train_df)
@@ -76,7 +50,6 @@ if (file.exists(penalty_path)) {
 }
 
 if (is.na(lasso_penalty) || !is.finite(lasso_penalty)) {
-  cat("No valid nested-CV penalty found. Tuning lasso penalty on train split with 5-fold CV...\n")
   lasso_tune_spec <- parsnip::linear_reg(penalty = tune::tune(), mixture = 1) %>%
     parsnip::set_engine("glmnet")
 
@@ -87,21 +60,25 @@ if (is.na(lasso_penalty) || !is.finite(lasso_penalty)) {
   tune_folds <- rsample::vfold_cv(train_df, v = 5)
   tune_grid <- dials::grid_regular(dials::penalty(), levels = 30)
 
-  tuned_lasso <- tune::tune_grid(
-    object = lasso_tune_wf,
-    resamples = tune_folds,
-    grid = tune_grid,
-    metrics = metrics_used,
-    control = tune::control_grid(save_pred = FALSE)
+  tuned_lasso <- suppressWarnings(
+    suppressMessages(
+      tune::tune_grid(
+        object = lasso_tune_wf,
+        resamples = tune_folds,
+        grid = tune_grid,
+        metrics = metrics_used,
+        control = tune::control_grid(save_pred = FALSE)
+      )
+    )
   )
 
-  lasso_penalty <- tune::select_best(tuned_lasso, metric = "rmse")$penalty
+  lasso_penalty <- tune::select_best(tuned_lasso, metric = "accuracy")$penalty
 }
 
-lasso_spec <- parsnip::linear_reg(penalty = lasso_penalty, mixture = 1) %>%
+lasso_spec <- parsnip::multinom_reg(penalty = lasso_penalty, mixture = 1) %>%
   parsnip::set_engine("glmnet")
-ols_spec <- parsnip::linear_reg() %>% parsnip::set_engine("lm")
-intercept_spec <- parsnip::linear_reg() %>% parsnip::set_engine("lm")
+ols_spec <- parsnip::multinom_reg(penalty = 0) %>% parsnip::set_engine("nnet", trace = FALSE)
+intercept_spec <- parsnip::multinom_reg(penalty = 0) %>% parsnip::set_engine("nnet", trace = FALSE)
 
 lasso_wf <- workflows::workflow() %>%
   workflows::add_recipe(base_recipe) %>%
@@ -115,121 +92,54 @@ intercept_wf <- workflows::workflow() %>%
   workflows::add_recipe(intercept_recipe) %>%
   workflows::add_model(intercept_spec)
 
-fitted_lasso <- parsnip::fit(lasso_wf, data = train_df)
-fitted_ols <- parsnip::fit(ols_wf, data = train_df)
-fitted_intercept <- parsnip::fit(intercept_wf, data = train_df)
+fitted_lasso <- suppressWarnings(parsnip::fit(lasso_wf, data = train_df))
+fitted_ols <- suppressWarnings(parsnip::fit(ols_wf, data = train_df))
+fitted_intercept <- suppressWarnings(parsnip::fit(intercept_wf, data = train_df))
 
-pred_lasso <- predict(fitted_lasso, new_data = test_df) %>%
+pred_lasso <- predict(fitted_lasso, new_data = test_df, type = "class") %>%
   dplyr::bind_cols(test_df %>% dplyr::select(quality)) %>%
   dplyr::mutate(model = "lasso")
 
-pred_ols <- predict(fitted_ols, new_data = test_df) %>%
+pred_ols <- predict(fitted_ols, new_data = test_df, type = "class") %>%
   dplyr::bind_cols(test_df %>% dplyr::select(quality)) %>%
   dplyr::mutate(model = "ols_full")
 
-pred_intercept <- predict(fitted_intercept, new_data = test_df) %>%
+pred_intercept <- predict(fitted_intercept, new_data = test_df, type = "class") %>%
   dplyr::bind_cols(test_df %>% dplyr::select(quality)) %>%
   dplyr::mutate(model = "intercept_only")
 
 all_preds <- dplyr::bind_rows(pred_lasso, pred_ols, pred_intercept)
 
-# #region agent log
-debug_log(
-  "H2",
-  "scripts/model-test.R:136",
-  "all_preds_built",
-  list(
-    nrow = nrow(all_preds),
-    cols = paste(names(all_preds), collapse = ","),
-    has_quality = "quality" %in% names(all_preds),
-    has_pred = ".pred" %in% names(all_preds)
-  )
-)
-# #endregion
-
-test_metrics <- tryCatch(
-  {
-    # #region agent log
-    debug_log(
-      "H1",
-      "scripts/model-test.R:152",
-      "before_test_metrics_compute",
-      list(
-        quality_class = paste(class(all_preds$quality), collapse = ","),
-        pred_class = paste(class(all_preds$.pred), collapse = ","),
-        quality_na = sum(is.na(all_preds$quality)),
-        pred_na = sum(is.na(all_preds$.pred))
-      )
-    )
-    # #endregion
-
-    metrics <- all_preds %>%
-      dplyr::group_by(model) %>%
-      metrics_used(truth = quality, estimate = .pred) %>%
-      dplyr::ungroup()
-
-    # #region agent log
-    debug_log(
-      "H4",
-      "scripts/model-test.R:170",
-      "test_metrics_computed",
-      list(nrow = nrow(metrics), cols = paste(names(metrics), collapse = ","))
-    )
-    # #endregion
-    metrics
-  },
-  error = function(e) {
-    # #region agent log
-    debug_log(
-      "H1",
-      "scripts/model-test.R:180",
-      "test_metrics_compute_error",
-      list(error = conditionMessage(e), metrics_used_exists = exists("metrics_used"))
-    )
-    # #endregion
-    stop(e)
-  }
-)
+test_metrics <- all_preds %>%
+  dplyr::group_by(model) %>%
+  metrics_used(truth = quality, estimate = .pred_class) %>%
+  dplyr::ungroup()
 
 errors_for_terminal <- test_metrics %>%
-  dplyr::filter(.metric %in% c("rmse", "mae")) %>%
-  dplyr::arrange(model, .metric) %>%
+  dplyr::arrange(model) %>%
   dplyr::mutate(.estimate = round(.estimate, 4))
 
-cat("Test-set error metrics (quality prediction):\n")
 print(errors_for_terminal)
-
-cat("\nLasso penalty used:", signif(lasso_penalty, 4), "\n")
 
 metrics_output <- "output/model_test_metrics.csv"
 plot_output <- "output/model_test_yardsticks_bar.png"
 if (!dir.exists("output")) dir.create("output", recursive = TRUE)
 
-# #region agent log
-debug_log(
-  "H5",
-  "scripts/model-test.R:200",
-  "before_write_outputs",
-  list(test_metrics_exists = exists("test_metrics"), test_metrics_nrow = nrow(test_metrics))
-)
-# #endregion
-
 readr::write_csv(test_metrics, metrics_output)
 
 plot_data <- test_metrics %>%
   dplyr::mutate(
-    model = factor(model, levels = c("lasso", "ols_full", "intercept_only")),
-    .metric = factor(.metric, levels = c("rmse", "mae", "rsq"))
+    model = factor(model, levels = c("lasso", "ols_full", "intercept_only"))
   )
 
 yardstick_plot <- ggplot2::ggplot(plot_data, ggplot2::aes(x = model, y = .estimate, fill = model)) +
   ggplot2::geom_col(width = 0.7, show.legend = FALSE) +
-  ggplot2::facet_wrap(~.metric, scales = "free_y") +
   ggplot2::labs(
-    title = "Test-Set Yardstick Metrics by Model",
+    title = "Test-Set Accuracy by Model",
     x = "Model",
-    y = "Metric Value"
+    y = "Accuracy"
   ) +
+  ggplot2::ylim(0, 1) +
   ggplot2::theme_minimal(base_size = 12)
 
 ggplot2::ggsave(
@@ -239,8 +149,4 @@ ggplot2::ggsave(
   height = 4.5,
   dpi = 300
 )
-
-cat("\nSaved outputs:\n")
-cat(paste0("- ", metrics_output, "\n"))
-cat(paste0("- ", plot_output, "\n"))
 

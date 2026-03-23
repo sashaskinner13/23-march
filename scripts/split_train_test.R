@@ -6,7 +6,7 @@ suppressPackageStartupMessages({
 
 set.seed(123)
 
-input_path <- "data/processed/train.csv"
+input_path <- "data/raw/train.csv"
 train_output_path <- "data/processed/train_split.csv"
 test_output_path <- "data/processed/test_split.csv"
 
@@ -22,8 +22,4 @@ test_split <- rsample::testing(split_obj)
 
 readr::write_delim(train_split, train_output_path, delim = ";")
 readr::write_delim(test_split, test_output_path, delim = ";")
-
-cat("Created:\n")
-cat(paste0("- ", train_output_path, " (", nrow(train_split), " rows)\n"))
-cat(paste0("- ", test_output_path, " (", nrow(test_split), " rows)\n"))
 

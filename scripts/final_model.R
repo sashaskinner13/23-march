@@ -12,7 +12,7 @@ train_path <- if (file.exists("data/processed/train_split.csv")) {
   "data/raw/train.csv"
 }
 
-metrics_path <- "output/model_test_metrics.csv"
+metrics_path <- "data/processed/model_assessment_cv_metrics.csv"
 penalty_path <- "data/processed/lasso_nested_penalty_by_fold.csv"
 predictions_output <- "output/final_model_predictions.csv"
 
@@ -45,15 +45,16 @@ metrics_df <- readr::read_csv(metrics_path, show_col_types = FALSE)
 if (!"quality" %in% names(train_df)) {
   stop("Expected a 'quality' column in training data.", call. = FALSE)
 }
+train_df <- dplyr::mutate(train_df, quality = factor(quality))
 
 best_model <- metrics_df %>%
-  dplyr::filter(.metric == "rmse", !is.na(.estimate)) %>%
-  dplyr::arrange(.estimate) %>%
+  dplyr::filter(.metric == "accuracy", !is.na(mean)) %>%
+  dplyr::arrange(dplyr::desc(mean)) %>%
   dplyr::slice(1) %>%
   dplyr::pull(model)
 
 if (length(best_model) == 0 || is.na(best_model)) {
-  stop("No valid best model found from RMSE in model_test_metrics.csv.", call. = FALSE)
+  stop("No valid best model found from accuracy in model_assessment_cv_metrics.csv.", call. = FALSE)
 }
 
 base_recipe <- recipes::recipe(quality ~ ., data = train_df)
@@ -69,37 +70,41 @@ if (best_model == "lasso") {
     }
 
     if (is.na(lasso_penalty) || !is.finite(lasso_penalty)) {
-      lasso_tune_spec <- parsnip::linear_reg(penalty = tune::tune(), mixture = 1) %>%
+      lasso_tune_spec <- parsnip::multinom_reg(penalty = tune::tune(), mixture = 1) %>%
         parsnip::set_engine("glmnet")
       lasso_tune_wf <- workflows::workflow() %>%
         workflows::add_recipe(base_recipe) %>%
         workflows::add_model(lasso_tune_spec)
       tune_folds <- rsample::vfold_cv(train_df, v = 5)
       tune_grid <- dials::grid_regular(dials::penalty(), levels = 30)
-      tuned_lasso <- tune::tune_grid(
-        object = lasso_tune_wf,
-        resamples = tune_folds,
-        grid = tune_grid,
-        metrics = yardstick::metric_set(yardstick::rmse),
-        control = tune::control_grid(save_pred = FALSE)
+      tuned_lasso <- suppressWarnings(
+        suppressMessages(
+          tune::tune_grid(
+            object = lasso_tune_wf,
+            resamples = tune_folds,
+            grid = tune_grid,
+            metrics = yardstick::metric_set(yardstick::accuracy),
+            control = tune::control_grid(save_pred = FALSE)
+          )
+        )
       )
-      lasso_penalty <- tune::select_best(tuned_lasso, metric = "rmse")$penalty
+      lasso_penalty <- tune::select_best(tuned_lasso, metric = "accuracy")$penalty
     }
 
-    lasso_spec <- parsnip::linear_reg(penalty = lasso_penalty, mixture = 1) %>%
+    lasso_spec <- parsnip::multinom_reg(penalty = lasso_penalty, mixture = 1) %>%
       parsnip::set_engine("glmnet")
     model_wf <- workflows::workflow() %>%
       workflows::add_recipe(base_recipe) %>%
       workflows::add_model(lasso_spec)
 } else if (best_model == "ols_full") {
-    ols_spec <- parsnip::linear_reg() %>%
-      parsnip::set_engine("lm")
+    ols_spec <- parsnip::multinom_reg(penalty = 0) %>%
+      parsnip::set_engine("nnet", trace = FALSE)
     model_wf <- workflows::workflow() %>%
       workflows::add_recipe(base_recipe) %>%
       workflows::add_model(ols_spec)
 } else if (best_model == "intercept_only") {
-    intercept_spec <- parsnip::linear_reg() %>%
-      parsnip::set_engine("lm")
+    intercept_spec <- parsnip::multinom_reg(penalty = 0) %>%
+      parsnip::set_engine("nnet", trace = FALSE)
     model_wf <- workflows::workflow() %>%
       workflows::add_recipe(intercept_recipe) %>%
       workflows::add_model(intercept_spec)
@@ -107,18 +112,15 @@ if (best_model == "lasso") {
   stop(paste("Unsupported best model:", best_model), call. = FALSE)
 }
 
-fitted_model <- parsnip::fit(model_wf, data = train_df)
-preds <- predict(fitted_model, new_data = test_df)
+fitted_model <- suppressWarnings(parsnip::fit(model_wf, data = train_df))
+preds <- predict(fitted_model, new_data = test_df, type = "class")
 
 if (!dir.exists("output")) dir.create("output", recursive = TRUE)
 
 predictions_df <- dplyr::bind_cols(test_df, preds) %>%
-  dplyr::mutate(selected_model = best_model)
+  dplyr::mutate(
+    selected_model = best_model,
+    predicted_quality = as.character(.pred_class)
+  )
 
 readr::write_csv(predictions_df, predictions_output)
-
-cat("Final model run complete.\n")
-cat(paste0("- Selected model (lowest RMSE): ", best_model, "\n"))
-cat(paste0("- Train data: ", train_path, "\n"))
-cat(paste0("- Test data: ", test_path, "\n"))
-cat(paste0("- Predictions saved to: ", predictions_output, "\n"))

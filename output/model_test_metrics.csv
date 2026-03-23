@@ -1,10 +1,4 @@
 model,.metric,.estimator,.estimate
-intercept_only,rmse,standard,0.8941645338826577
-lasso,rmse,standard,0.7449435061224955
-ols_full,rmse,standard,0.7449272883041328
-intercept_only,mae,standard,0.7050740925740928
-lasso,mae,standard,0.5810520404921765
-ols_full,mae,standard,0.5809288260457349
-intercept_only,rsq,standard,NA
-lasso,rsq,standard,0.30643226502871773
-ols_full,rsq,standard,0.30631877739205793
+intercept_only,accuracy,multiclass,0.4221153846153846
+lasso,accuracy,multiclass,0.5346153846153846
+ols_full,accuracy,multiclass,0.5403846153846154
