@@ -2,54 +2,44 @@
 
 suppressPackageStartupMessages({
   source("src/load_packages.R")
+  source("src/paths.R")
+  source("src/metrics.R")
+  source("src/quality_helpers.R")
 })
 
 set.seed(20260323)
 
-train_path <- if (file.exists("data/processed/train_split.csv")) {
-  "data/processed/train_split.csv"
-} else {
-  "data/raw/train.csv"
-}
-
-metrics_path <- "data/processed/model_assessment_cv_metrics.csv"
-penalty_path <- "data/processed/lasso_nested_penalty_by_fold.csv"
-predictions_output <- "output/final_model_predictions.csv"
-
-if (!file.exists(metrics_path)) {
+if (!file.exists(model_assessment_metrics_path)) {
   stop(
     paste(
       "Missing model test metrics at",
-      metrics_path,
+      model_assessment_metrics_path,
       "\nRun scripts/model-test.R first."
     ),
     call. = FALSE
   )
 }
 
-test_path <- if (file.exists("data/raw/test.csv")) {
-  "data/raw/test.csv"
-} else if (file.exists("data/processed/test_split.csv")) {
-  "data/processed/test_split.csv"
-} else {
+if (!file.exists(default_test_path)) {
   stop(
     "Missing test data. Expected data/raw/test.csv or data/processed/test_split.csv.",
     call. = FALSE
   )
 }
 
-train_df <- readr::read_delim(train_path, delim = ";", show_col_types = FALSE)
-test_df <- readr::read_delim(test_path, delim = ";", show_col_types = FALSE)
-metrics_df <- readr::read_csv(metrics_path, show_col_types = FALSE)
+train_df <- readr::read_delim(default_train_path, delim = ";", show_col_types = FALSE)
+test_df <- readr::read_delim(default_test_path, delim = ";", show_col_types = FALSE)
+metrics_df <- readr::read_csv(model_assessment_metrics_path, show_col_types = FALSE)
 
 if (!"quality" %in% names(train_df)) {
   stop("Expected a 'quality' column in training data.", call. = FALSE)
 }
-train_df <- dplyr::mutate(train_df, quality = factor(quality))
+quality_levels <- sort(unique(train_df$quality))
+train_df <- dplyr::mutate(train_df, quality = as_ordered_quality(quality, levels = quality_levels))
 
 best_model <- metrics_df %>%
-  dplyr::filter(.metric == "accuracy", !is.na(mean)) %>%
-  dplyr::arrange(dplyr::desc(mean)) %>%
+  dplyr::filter(.metric == "ord_mae", !is.na(mean)) %>%
+  dplyr::arrange(mean) %>%
   dplyr::slice(1) %>%
   dplyr::pull(model)
 
@@ -57,13 +47,15 @@ if (length(best_model) == 0 || is.na(best_model)) {
   stop("No valid best model found from accuracy in model_assessment_cv_metrics.csv.", call. = FALSE)
 }
 
-base_recipe <- recipes::recipe(quality ~ ., data = train_df)
+base_recipe <- recipes::recipe(quality ~ ., data = train_df) %>%
+  recipes::step_zv(recipes::all_predictors()) %>%
+  recipes::step_normalize(recipes::all_numeric_predictors())
 intercept_recipe <- recipes::recipe(quality ~ 1, data = train_df)
 
 if (best_model == "lasso") {
     lasso_penalty <- NA_real_
-    if (file.exists(penalty_path)) {
-      penalty_df <- readr::read_csv(penalty_path, show_col_types = FALSE)
+    if (file.exists(lasso_penalty_by_fold_path)) {
+      penalty_df <- readr::read_csv(lasso_penalty_by_fold_path, show_col_types = FALSE)
       if ("penalty" %in% names(penalty_df) && nrow(penalty_df) > 0) {
         lasso_penalty <- stats::median(penalty_df$penalty, na.rm = TRUE)
       }
@@ -108,6 +100,52 @@ if (best_model == "lasso") {
     model_wf <- workflows::workflow() %>%
       workflows::add_recipe(intercept_recipe) %>%
       workflows::add_model(intercept_spec)
+} else if (best_model == "xgboost") {
+    xgb_params <- NULL
+    if (file.exists(xgboost_best_params_path)) {
+      xgb_params <- readr::read_csv(xgboost_best_params_path, show_col_types = FALSE)
+    }
+
+    xgb_spec <- parsnip::boost_tree(
+      trees = tune::tune(),
+      tree_depth = tune::tune(),
+      learn_rate = tune::tune(),
+      loss_reduction = tune::tune(),
+      mtry = tune::tune(),
+      min_n = tune::tune()
+    ) %>%
+      parsnip::set_mode("classification") %>%
+      parsnip::set_engine("xgboost")
+
+    xgb_wf <- workflows::workflow() %>%
+      workflows::add_recipe(base_recipe) %>%
+      workflows::add_model(xgb_spec)
+
+    if (is.null(xgb_params) || nrow(xgb_params) == 0) {
+      xgb_param_set <- dials::parameters(
+        dials::trees(),
+        dials::tree_depth(),
+        dials::learn_rate(),
+        dials::loss_reduction(),
+        dials::mtry(range = c(1L, max(1L, ncol(train_df) - 1L))),
+        dials::min_n()
+      )
+      xgb_grid <- dials::grid_space_filling(xgb_param_set, size = 25)
+      tuned_xgb <- suppressWarnings(
+        suppressMessages(
+          tune::tune_grid(
+            object = xgb_wf,
+            resamples = rsample::vfold_cv(train_df, v = 5),
+            grid = xgb_grid,
+            metrics = metrics_used,
+            control = tune::control_grid(save_pred = FALSE)
+          )
+        )
+      )
+      xgb_params <- tune::select_best(tuned_xgb, metric = "ord_mae")
+    }
+
+    model_wf <- tune::finalize_workflow(xgb_wf, xgb_params)
 } else {
   stop(paste("Unsupported best model:", best_model), call. = FALSE)
 }
@@ -123,4 +161,4 @@ predictions_df <- dplyr::bind_cols(test_df, preds) %>%
     predicted_quality = as.character(.pred_class)
   )
 
-readr::write_csv(predictions_df, predictions_output)
+readr::write_csv(predictions_df, final_model_predictions_path)

@@ -1,4 +1,9 @@
 model,.metric,.estimator,.estimate
-intercept_only,accuracy,multiclass,0.4221153846153846
-lasso,accuracy,multiclass,0.5346153846153846
-ols_full,accuracy,multiclass,0.5403846153846154
+intercept_only,accuracy,multiclass,0.43653846153846154
+lasso,accuracy,multiclass,0.5461538461538461
+ols_full,accuracy,multiclass,0.5451923076923076
+xgboost,accuracy,multiclass,0.6346153846153846
+intercept_only,ord_mae,multiclass,0.6173076923076923
+lasso,ord_mae,multiclass,0.4932692307692308
+ols_full,ord_mae,multiclass,0.49423076923076925
+xgboost,ord_mae,multiclass,0.40192307692307694
