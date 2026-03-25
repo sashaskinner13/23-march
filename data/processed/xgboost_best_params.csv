@@ -1,0 +1,2 @@
+.config,mtry,trees,min_n,tree_depth,learn_rate,loss_reduction,.estimator,mean,n,std_err
+pre0_mod12_post0,6,1833,3,10,0.001333521432163324,6.18965818891261e-6,multiclass,0.621693331410414,5,0.0015968459342066714

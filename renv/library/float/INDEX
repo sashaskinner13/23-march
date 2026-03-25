@@ -1,0 +1,47 @@
+Machine_float           Machine_float
+NA_float_               NA_float_
+NaNf                    NaNf
+arithmetic              arithmetic
+backsolve               backsolve
+bind                    rbind
+bracket                 Extract
+c                       c
+chol                    chol
+chol2inv                chol2inv
+colsums                 colSums
+comparison              comparison
+converters              converters
+crossprod               crossprod
+diag                    diag
+dims                    dim
+eigen                   eigen
+extremes                extremes
+float                   float
+float-package           32-Bit Floats
+float32                 float32
+float32-class           Class float32
+hyperbolic              Hyperbolic functions
+is.float                is.float
+isSymmetric             isSymmetric
+log                     Logarithms and Exponentials
+mathis                  Finite, infinite, and NaNs
+matmult                 matmult
+miscmath                Miscellaneous mathematical functions
+na                      NA
+names                   names
+norm                    norm
+print-float32           print-float32
+qr                      QR
+rand                    Generators
+rcond                   rcond
+rep                     rep
+round                   Round
+scale                   scale
+sign                    sign
+solve                   solve
+specialmath             Special mathematical functions
+sum                     sum
+svd                     SVD
+sweep                   sweep
+trig                    Trigonometric functions
+xpose                   xpose
