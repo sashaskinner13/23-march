@@ -36,6 +36,9 @@ if (!"quality" %in% names(train_df)) {
 }
 quality_levels <- sort(unique(train_df$quality))
 train_df <- dplyr::mutate(train_df, quality = as_ordered_quality(quality, levels = quality_levels))
+if ("quality" %in% names(test_df)) {
+  test_df <- dplyr::mutate(test_df, quality = as_ordered_quality(quality, levels = quality_levels))
+}
 
 best_model <- metrics_df %>%
   dplyr::filter(.metric == "ord_mae", !is.na(mean)) %>%
@@ -162,3 +165,11 @@ predictions_df <- dplyr::bind_cols(test_df, preds) %>%
   )
 
 readr::write_csv(predictions_df, final_model_predictions_path)
+
+if ("quality" %in% names(test_df)) {
+  final_accuracy <- mean(
+    as.character(test_df$quality) == as.character(preds$.pred_class),
+    na.rm = TRUE
+  )
+  cat("Final model accuracy:", round(final_accuracy, 4), "\n")
+}

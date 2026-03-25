@@ -1,5 +1,0 @@
-{"sessionId":"b139f0","runId":"pre-fix-20260323133305","hypothesisId":"H3","location":"scripts/model-test.R:37","message":"script_started","data":[],"timestamp":"NA"} 
-{"sessionId":"b139f0","runId":"pre-fix-20260323133305","hypothesisId":"H2","location":"scripts/model-test.R:136","message":"all_preds_built","data":{"nrow":3120,"cols":".pred,quality,model","has_quality":true,"has_pred":true},"timestamp":"NA"} 
-{"sessionId":"b139f0","runId":"pre-fix-20260323133305","hypothesisId":"H1","location":"scripts/model-test.R:152","message":"before_test_metrics_compute","data":{"quality_class":"numeric","pred_class":"numeric","quality_na":0,"pred_na":0},"timestamp":"NA"} 
-{"sessionId":"b139f0","runId":"pre-fix-20260323133305","hypothesisId":"H4","location":"scripts/model-test.R:170","message":"test_metrics_computed","data":{"nrow":9,"cols":"model,.metric,.estimator,.estimate"},"timestamp":"NA"} 
-{"sessionId":"b139f0","runId":"pre-fix-20260323133305","hypothesisId":"H5","location":"scripts/model-test.R:200","message":"before_write_outputs","data":{"test_metrics_exists":true,"test_metrics_nrow":9},"timestamp":"NA"} 
